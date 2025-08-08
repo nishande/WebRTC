@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>P2P Clipboard Sync (No Server Demo)</title>
+  <style>
+    :root { --bg:#0b0f14; --panel:#121823; --muted:#7f8aa3; --text:#e6edf3; --accent:#6aa6ff; --danger:#ff6a6a; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin: 0; font: 16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); }
+    header { padding: 16px; border-bottom: 1px solid #1f2835; display:flex; gap:12px; align-items:center; justify-content:space-between; background: #0d141f; position: sticky; top: 0; z-index: 10; }
+    h1 { margin:0; font-size: 18px; font-weight: 600; letter-spacing: .2px; }
+    main { max-width: 960px; margin: 0 auto; padding: 16px; }
+    .row { display: grid; grid-template-columns: 1fr; gap: 16px; }
+    @media(min-width: 860px){ .row { grid-template-columns: 1fr 1fr; } }
+    .card { background: var(--panel); border: 1px solid #1f2835; border-radius: 14px; padding: 14px; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
+    .card h2 { margin: 0 0 8px; font-size: 16px; font-weight:600; color:#b7c4d7; }
+    .muted { color: var(--muted); font-size: 13px; }
+    label { font-size: 13px; color: #b7c4d7; display:block; margin-bottom: 6px; }
+    input[type="text"], textarea { width: 100%; padding: 10px 12px; background: #0f1622; color: var(--text); border: 1px solid #223047; border-radius: 10px; outline: none; }
+    textarea { min-height: 160px; resize: vertical; }
+    .btn { appearance: none; border: 1px solid #23406f; background: #112445; color: var(--text); padding: 10px 14px; border-radius: 12px; cursor: pointer; font-weight: 600; }
+    .btn:hover { filter: brightness(1.1); }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-danger { border-color: #5a1a1a; background: #2a1212; color: #ffb3b3; }
+    .stack { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color:#cfe0ff; word-break: break-all; }
+    .ok { color:#87efb1; }
+    .warn { color:#ffd791; }
+    .err { color:#ffb0b0; }
+    .pill { padding:4px 8px; border-radius:999px; border:1px solid #2a3952; background:#0f1826; font-size:12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>📋 P2P Clipboard Sync (serverless demo)</h1>
+    <div class="stack">
+      <span class="pill" id="secureState"></span>
+      <span class="pill" id="webrtcState">WebRTC: —</span>
+      <span class="pill" id="dcState">Data Channel: —</span>
+    </div>
+  </header>
+
+  <main>
+    <div class="card" style="margin-bottom:16px">
+      <h2>Device identity</h2>
+      <label for="deviceName">Name shown to the other side</label>
+      <input id="deviceName" type="text" placeholder="e.g., Nishan’s Laptop" />
+    </div>
+
+    <div class="row">
+      <div class="card">
+        <h2>Start a connection (Offerer)</h2>
+        <p class="muted">Step 1: Click <b>Create Offer</b>. Step 2: Copy the Offer and send it to the other device. Step 3: Paste their <b>Answer</b> below and click <b>Accept Answer</b>.</p>
+        <div class="stack" style="margin:8px 0 12px">
+          <button class="btn" id="btnCreate">Create Offer</button>
+          <button class="btn" id="btnReset">Reset</button>
+        </div>
+        <label>Your Offer (send this)</label>
+        <textarea id="offerOut" readonly placeholder="(generated SDP will appear here)"></textarea>
+        <label>Their Answer (paste here)</label>
+        <textarea id="answerIn" placeholder="Paste the SDP answer you received"></textarea>
+        <div style="margin-top:8px"><button class="btn" id="btnAccept">Accept Answer</button></div>
+      </div>
+
+      <div class="card">
+        <h2>Respond to a connection (Answerer)</h2>
+        <p class="muted">If you received an Offer, paste it and click <b>Make Answer</b>. Then send the Answer back.</p>
+        <label>Their Offer (paste here)</label>
+        <textarea id="offerIn" placeholder="Paste the SDP offer you received"></textarea>
+        <div class="stack" style="margin:8px 0 12px">
+          <button class="btn" id="btnAnswer">Make Answer</button>
+          <button class="btn" id="btnReset2">Reset</button>
+        </div>
+        <label>Your Answer (send this)</label>
+        <textarea id="answerOut" readonly placeholder="(generated SDP will appear here)"></textarea>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h2>Shared Text Box</h2>
+      <p class="muted">Anything typed or pasted here is mirrored to the other device. For system clipboard actions, use the buttons (browsers require a user gesture).</p>
+      <textarea id="sharedBox" placeholder="Type or paste here…" disabled></textarea>
+      <div class="stack" style="margin-top:8px">
+        <button class="btn" id="btnPaste">Paste from system ⬇️</button>
+        <button class="btn" id="btnCopy">Copy to system ⬆️</button>
+        <label class="muted"><input type="checkbox" id="autoCopy" /> Try to auto-copy on receive</label>
+      </div>
+      <div id="log" class="mono" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h2>Notes & Production Tips</h2>
+      <ul>
+        <li>This demo avoids any server by using manual copy/paste for WebRTC signaling. In production, use a tiny WebSocket/Firebase channel and (optionally) a TURN server for tough networks.</li>
+        <li>Clipboard reads require a user gesture. Use the buttons or press <kbd>Ctrl/⌘+V</kbd> into the box; we propagate text after that.</li>
+        <li>Works only on secure origins (HTTPS or localhost) for Clipboard and WebRTC.</li>
+      </ul>
+    </div>
+  </main>
+
+  <script>
+    const secureState = document.getElementById('secureState');
+    secureState.textContent = (window.isSecureContext ? 'Secure context ✅' : 'Not secure (use HTTPS) ⚠️');
+
+    let pc, dc, isOfferer = false, connected = false, suppressSend = false;
+
+    const logEl = document.getElementById('log');
+    const deviceNameEl = document.getElementById('deviceName');
+    const webrtcState = document.getElementById('webrtcState');
+    const dcState = document.getElementById('dcState');
+    const sharedBox = document.getElementById('sharedBox');
+
+    function log(msg, cls=''){
+      const time = new Date().toLocaleTimeString();
+      const span = document.createElement('div');
+      span.className = cls;
+      span.textContent = `[${time}] ${msg}`;
+      logEl.prepend(span);
+    }
+
+    function setStates(){
+      webrtcState.textContent = `WebRTC: ${pc? pc.connectionState : '—'}`;
+      dcState.textContent = `Data Channel: ${dc? dc.readyState : '—'}`;
+      sharedBox.disabled = !(dc && dc.readyState === 'open');
+    }
+
+    function makePeer(){
+      if (pc) pc.close();
+      pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: ['stun:stun.l.google.com:19302','stun:global.stun.twilio.com:3478'] }
+        ]
+      });
+
+      pc.onicecandidate = ev => {
+        // SDP is managed as a whole (trickle ICE still updates the blob). Just reflect updated SDP.
+        if (isOfferer) {
+          document.getElementById('offerOut').value = pc.localDescription ? JSON.stringify(pc.localDescription) : '';
+        } else {
+          document.getElementById('answerOut').value = pc.localDescription ? JSON.stringify(pc.localDescription) : '';
+        }
+      };
+
+      pc.onconnectionstatechange = () => {
+        setStates();
+        log(`PeerConnection: ${pc.connectionState}`);
+      };
+
+      pc.ondatachannel = ev => {
+        dc = ev.channel;
+        wireDataChannel();
+      };
+    }
+
+    function wireDataChannel(){
+      dc.onopen = () => { connected = true; setStates(); log('Data channel opened ✅', 'ok'); sendHello(); };
+      dc.onclose = () => { connected = false; setStates(); log('Data channel closed', 'warn'); };
+      dc.onerror = (e) => { log('Data channel error: ' + e.message, 'err'); };
+      dc.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === 'hello') {
+            log(`Connected with: ${msg.name || 'Unknown device'}`);
+          }
+          if (msg.type === 'text') {
+            suppressSend = true; // avoid feedback loop
+            sharedBox.value = msg.text;
+            suppressSend = false;
+            if (document.getElementById('autoCopy').checked) {
+              try { navigator.clipboard.writeText(msg.text); } catch {}
+            }
+          }
+        } catch { /* ignore */ }
+      };
+    }
+
+    function sendHello(){
+      const name = deviceNameEl.value.trim() || 'Unnamed device';
+      dc.send(JSON.stringify({ type: 'hello', name }));
+    }
+
+    // Offerer flow
+    document.getElementById('btnCreate').onclick = async () => {
+      isOfferer = true;
+      makePeer();
+      dc = pc.createDataChannel('clipboard');
+      wireDataChannel();
+
+      const offer = await pc.createOffer({offerToReceiveAudio:false, offerToReceiveVideo:false});
+      await pc.setLocalDescription(offer);
+      document.getElementById('offerOut').value = JSON.stringify(pc.localDescription);
+      setStates();
+      log('Offer created. Share it with the other device.');
+    };
+
+    document.getElementById('btnAccept').onclick = async () => {
+      try {
+        const answer = JSON.parse(document.getElementById('answerIn').value);
+        await pc.setRemoteDescription(answer);
+        log('Answer accepted. Waiting for channel to open…');
+      } catch (e) { log('Invalid answer JSON', 'err'); }
+    };
+
+    // Answerer flow
+    document.getElementById('btnAnswer').onclick = async () => {
+      try {
+        isOfferer = false;
+        makePeer();
+        const offer = JSON.parse(document.getElementById('offerIn').value);
+        await pc.setRemoteDescription(offer);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        document.getElementById('answerOut').value = JSON.stringify(pc.localDescription);
+        setStates();
+        log('Answer created. Send it back to the offerer.');
+      } catch (e) { log('Invalid offer JSON', 'err'); }
+    };
+
+    // Reset buttons
+    const doReset = () => { try { if (pc) pc.close(); } catch{}; pc=null; dc=null; connected=false; setStates(); log('Reset state.', 'warn'); };
+    document.getElementById('btnReset').onclick = doReset;
+    document.getElementById('btnReset2').onclick = doReset;
+
+    // Shared text box sync
+    sharedBox.addEventListener('input', () => {
+      if (!dc || dc.readyState !== 'open' || suppressSend) return;
+      dc.send(JSON.stringify({ type: 'text', text: sharedBox.value }));
+    });
+
+    // Clipboard buttons (require gestures)
+    document.getElementById('btnPaste').onclick = async () => {
+      try {
+        const txt = await navigator.clipboard.readText();
+        sharedBox.value = txt;
+        if (dc && dc.readyState === 'open') {
+          dc.send(JSON.stringify({ type: 'text', text: txt }));
+        }
+      } catch (e) {
+        log('Clipboard read blocked. Click the page and try again (HTTPS required).', 'err');
+      }
+    };
+
+    document.getElementById('btnCopy').onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(sharedBox.value);
+        log('Copied to system clipboard ✅', 'ok');
+      } catch (e) {
+        log('Clipboard write blocked. User gesture + HTTPS required.', 'err');
+      }
+    };
+
+    setStates();
+  </script>
+</body>
+</html>
